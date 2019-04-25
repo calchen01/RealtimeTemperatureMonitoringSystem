@@ -8,8 +8,8 @@
  Description: This program reads I2C data from digital thermometer and display it on 7-Segment
  Change History: 03 February 2008, Gravitech - Created
 ****************************************************************************/
-#include <Wire.h> 
- 
+#include <Wire.h>
+
 #define BAUD (9600)  /* Serial baud define */
 #define _7SEG (0x38) /* I2C address for 7-Segment */
 #define THERM (0x49) /* I2C address for digital thermometer */
@@ -23,12 +23,10 @@
 const byte NumberLookup[16] =   {0x3F,0x06,0x5B,0x4F,0x66,
                                  0x6D,0x7D,0x07,0x7F,0x6F, 
                                  0x77,0x7C,0x39,0x5E,0x79,0x71};
-                                 
 int incomingByte = 0;
 int temperatureUnitFlag = 0; //  0: C | 1: F
 int ledColor = 0; // Global var to store color info
 int displayFlag = 0; // 0: Display temperature | 1: Display CAFE | 2: Display CIS
-
 /* Function prototypes */
 void Cal_temp(int&, byte&, byte&, bool&);
 void Cal_F_temp(int&, byte&, byte&, bool&);
@@ -109,10 +107,10 @@ void loop() {
         // receive 4 -> Change display back to temperature
         if (incomingByte == 52)
             displayFlag = 0;
-        // receive 5 -> Light Red
+        // receive 5 -> Light red
         if (incomingByte == 53)
             ledColor = 3;
-        // receive 6 -> Light Green
+        // receive 6 -> Light green
         if (incomingByte == 54)
             ledColor = 4;
         // receive 7 -> Turn off light
@@ -219,22 +217,19 @@ void Dis_7SEG (int Decimal, byte High, byte Low, bool sign) {
         }
         if (Digit > 0)                             /* Clear the rest of the digit */
             Send7SEG(Digit, 0x00);    
-    }
-    else if (displayFlag == 1) {                   /* Display CAFE */
+    } else if (displayFlag == 1) {                 /* Display CAFE */
         byte Digit = 4;                            /* Number of 7-Segment digit */
         Send7SEG(4, NumberLookup[12]);
         Send7SEG(3, NumberLookup[10]);
         Send7SEG(2, NumberLookup[15]);
         Send7SEG(1, NumberLookup[14]);
-    }
-    else if (displayFlag == 2) {                   /* Display CIS */
+    } else if (displayFlag == 2) {                 /* Display CIS */
         byte Digit = 3;                            /* Number of 7-Segment digit */
         Send7SEG(4, NumberLookup[12]);
         Send7SEG(3, NumberLookup[1]);
         Send7SEG(2, NumberLookup[5]);
         Send7SEG(1, 0x00);
-    }
-    else if (displayFlag == 3) {                   /* Turn off display */
+    } else if (displayFlag == 3) {                 /* Turn off display */
         byte Digit = 3;                            /* Number of 7-Segment digit */
         Send7SEG(4, 0x00);
         Send7SEG(3, 0x00);
