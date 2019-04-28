@@ -24,7 +24,7 @@ const byte NumberLookup[16] =   {0x3F,0x06,0x5B,0x4F,0x66,
                                  0x6D,0x7D,0x07,0x7F,0x6F, 
                                  0x77,0x7C,0x39,0x5E,0x79,0x71};
 int incomingByte = 0;
-int temperatureUnitFlag = 0; //  0: C | 1: F
+int temperatureUnitFlag = 0; // 0: C | 1: F
 int ledColor = 0; // Global var to store color info
 int displayFlag = 0; // 0: Display temperature | 1: Display CAFE | 2: Display CIS
 /* Function prototypes */
@@ -37,7 +37,7 @@ void UpdateRGB(byte);
 
 /***************************************************************************
  Function Name: setup
- Purpose: Initialize hardwares.
+ Purpose: Initialize hardwares
 ****************************************************************************/
 void setup() { 
     Serial.begin(BAUD);
@@ -141,7 +141,7 @@ void loop() {
 
 /***************************************************************************
  Function Name: Cal_temp
- Purpose: Calculate temperature from raw data.
+ Purpose: Calculate temperature from raw data
 ****************************************************************************/
 void Cal_temp (int& Decimal, byte& High, byte& Low, bool& sign) {
     if ((High & B10000000) == 0x80) /* Check for negative temperature */
@@ -161,20 +161,20 @@ void Cal_temp (int& Decimal, byte& High, byte& Low, bool& sign) {
 
 /***************************************************************************
  Function Name: Cal_F_temp
- Purpose: Calculate temperature from raw data.
+ Purpose: Calculate temperature from raw data
 ****************************************************************************/
 void Cal_F_temp(int& Decimal, byte& High, byte& Low, bool& sign) {
     if (temperatureUnitFlag) {
         double fTemperature  = High + 0.0001 * Decimal;
         fTemperature = (9 * fTemperature / 5) + 32;
-        High = int (fTemperature) ;
+        High = int (fTemperature);
         Decimal =  (int) ((fTemperature - High) * 10000); // int(fTemperature * 1000 % 1000);
     }
 }
 
 /***************************************************************************
  Function Name: Dis_7SEG
- Purpose: Display number on the 7-segment display.
+ Purpose: Display number on the 7-segment display
  Parameter: int incomingByte = 0: Celsius; 1: Fahrenheit
 ****************************************************************************/
 void Dis_7SEG (int Decimal, byte High, byte Low, bool sign) {
@@ -240,7 +240,7 @@ void Dis_7SEG (int Decimal, byte High, byte Low, bool sign) {
 
 /***************************************************************************
  Function Name: Send7SEG
- Purpose: Send I2C commands to drive 7-segment display.
+ Purpose: Send I2C commands to drive 7-segment display
 ****************************************************************************/
 void Send7SEG(byte Digit, byte Number) {
     Wire.beginTransmission(_7SEG);
@@ -251,7 +251,7 @@ void Send7SEG(byte Digit, byte Number) {
 
 /***************************************************************************
  Function Name: UpdateRGB
- Purpose: Update RGB LED according to define HOT and COLD temperature. 
+ Purpose: Update RGB LED according to define HOT and COLD temperature
           R: 3 
           G: 4 
           B: 5
@@ -272,7 +272,7 @@ void UpdateRGB (byte Temperature_H) {
 
 /***************************************************************************
  Function Name: SerialMonitorPrint
- Purpose: Print current read temperature to the serial monitor.
+ Purpose: Print current read temperature to the serial monitor
 ****************************************************************************/
 void SerialMonitorPrint(byte Temperature_H, int Decimal, bool IsPositive) {
     Serial.print("The temperature is ");

@@ -15,21 +15,19 @@
 #include <float.h>
 
 char msg[101];
+int status; // 0: running / default, 1: standing by, 2: disconnected, 3: terminated
+int currScale; // 0: C / default, 1: F
 int instr; // 0: default / no instruction, 1: change scale to C, 2: change scale to F, 3: stand-by mode,
 		       // 4: resume from stand-by mode / change display to temperature, 5: change light to red, 
 		       // 6: change light to green, 7: turn off light, 8: change display to CAFE, 9: change display to CIS
-int currScale; // 0: C / default, 1: F
-int standby; // 0: not standing by / default, 1: standing by
-int disconnected; // 0: connected / default, 1: disconnected
 int count;
 double curr;
 double max;
 double min;
 double avg;
-pthread_mutex_t lockInstr;
+pthread_mutex_t lockStatus;
 pthread_mutex_t lockCurrScale;
-pthread_mutex_t lockStandby;
-pthread_mutex_t lockDisconnected;
+pthread_mutex_t lockInstr;
 pthread_mutex_t lockCount;
 pthread_mutex_t lockCurr;
 pthread_mutex_t lockMax;
@@ -72,16 +70,16 @@ int start_server(int PORT_NUMBER) {
   int sin_size = sizeof(struct sockaddr_in);
   int fd = accept(sock, (struct sockaddr*) &client_addr, (socklen_t*) &sin_size);
   if (fd != -1) {
-	// printf("Server got a connection from (%s, %d)\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-	// buffer to read data into
-	char request[1024];
-	// 5. recv: read incoming message (request) into buffer
-	int bytes_received = recv(fd, request, 1024, 0);
-	// null-terminate the string
-	request[bytes_received] = '\0';
-	// print it to standard out
-	if (request[5] != 't' && request[5] != 'f')
-	  printf("This is the incoming request: %c\n", request[5]);
+	  // printf("Server got a connection from (%s, %d)\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+	  // buffer to read data into
+	  char request[1024];
+	  // 5. recv: read incoming message (request) into buffer
+	  int bytes_received = recv(fd, request, 1024, 0);
+	  // null-terminate the string
+	  request[bytes_received] = '\0';
+	  // print it to standard out
+	  if (request[5] != 't' && request[5] != 'f')
+	    printf("This is the incoming request: %c\n", request[5]);
     if (request[5] == 'C') {
       pthread_mutex_lock(&lockInstr);
       instr = 1;
@@ -100,16 +98,16 @@ int start_server(int PORT_NUMBER) {
       pthread_mutex_lock(&lockInstr);
       instr = 3;
       pthread_mutex_unlock(&lockInstr);
-      pthread_mutex_lock(&lockStandby);
-      standby = 1;
-      pthread_mutex_unlock(&lockStandby);
+      pthread_mutex_lock(&lockStatus);
+      status = 1;
+      pthread_mutex_unlock(&lockStatus);
     } else if (request[5] == 'E') {
       pthread_mutex_lock(&lockInstr);
       instr = 4;
       pthread_mutex_unlock(&lockInstr);
-      pthread_mutex_lock(&lockStandby);
-      standby = 0;
-      pthread_mutex_unlock(&lockStandby);
+      pthread_mutex_lock(&lockStatus);
+      status = 0;
+      pthread_mutex_unlock(&lockStatus);
     } else if (request[5] == 'R') {
       pthread_mutex_lock(&lockInstr);
       instr = 5;
@@ -167,10 +165,10 @@ int start_server(int PORT_NUMBER) {
   	  maxStr[6] = 'C';
     } else {
   	  pthread_mutex_unlock(&lockCurrScale);
-  	  temp2 = temp2 * 9 / 5 + 32;
-  	  snprintf(maxStr, 7, "%.2f", temp2);
-  	  maxStr[5] = ' ';
-  	  maxStr[6] = 'F';
+      temp2 = temp2 * 9 / 5 + 32;
+      snprintf(maxStr, 7, "%.2f", temp2);
+      maxStr[5] = ' ';
+      maxStr[6] = 'F';
     }
 
     char* reply4 = "<br/>Minimum temperature so far: ";
@@ -224,16 +222,16 @@ int start_server(int PORT_NUMBER) {
     // 6. send: send the outgoing message (response) over the socket
     // note that the second argument is a char*, and the third is the number of chars	
     send(fd, reply1, strlen(reply1), 0);
-    pthread_mutex_lock(&lockDisconnected);
-    if (disconnected == 1) {
-      pthread_mutex_unlock(&lockDisconnected);
+    pthread_mutex_lock(&lockStatus);
+    if (status == 2) {
+      pthread_mutex_unlock(&lockStatus);
       char* disconnectMsg = "Arduino disconnected";
       send(fd, disconnectMsg, strlen(disconnectMsg), 0);
     } else {
-      pthread_mutex_unlock(&lockDisconnected);
-      pthread_mutex_lock(&lockStandby);
-      if (standby == 0) {
-        pthread_mutex_unlock(&lockStandby);
+      pthread_mutex_unlock(&lockStatus);
+      pthread_mutex_lock(&lockStatus);
+      if (status == 0) {
+        pthread_mutex_unlock(&lockStatus);
         send(fd, reply2, strlen(reply2), 0);
         send(fd, currStr, 7, 0);
         send(fd, reply3, strlen(reply3), 0);
@@ -243,7 +241,7 @@ int start_server(int PORT_NUMBER) {
         send(fd, reply5, strlen(reply5), 0);
         send(fd, avgStr, 7, 0);
       } else
-        pthread_mutex_unlock(&lockStandby);
+        pthread_mutex_unlock(&lockStatus);
     }
     send(fd, reply6, strlen(reply6), 0);
     send(fd, portNumStr, 4, 0);
@@ -274,7 +272,7 @@ int start_server(int PORT_NUMBER) {
   return 0; // return 0 for standard shutdown
 }
 
-// this code configures the file descriptor for use as a serial port.
+// this code configures the file descriptor for use as a serial port
 void configure(int fd) {
   struct termios pts;
   tcgetattr(fd, &pts);
@@ -287,6 +285,12 @@ void* usbCom(void* p) {
   // get the name from the command line
   char* filename = "/dev/cu.usbmodem14601";
   while (1) {
+  	pthread_mutex_lock(&lockStatus);
+    if (status == 3) {
+      pthread_mutex_unlock(&lockStatus);
+      return NULL;
+    } else
+      pthread_mutex_unlock(&lockStatus);
     // try to open the file for reading and writing
     // may need to change the flags depending on your platform
     int fd = open(filename, O_RDWR | O_NOCTTY | O_NDELAY);
@@ -295,23 +299,29 @@ void* usbCom(void* p) {
       continue;
     } else {
       printf("Successfully opened %s for reading and writing\n", filename);
-      pthread_mutex_lock(&lockDisconnected);
-      disconnected = 0;
-      pthread_mutex_unlock(&lockDisconnected);
+      pthread_mutex_lock(&lockStatus);
+      status = 0;
+      pthread_mutex_unlock(&lockStatus);
     }
     configure(fd);
-    // write the rest of the program below, using the read and write system calls.
+
     int j = 0;
     char buf[100];
     int end = 0;
     int countNeg = 0;
     while (1) {
+      pthread_mutex_lock(&lockStatus);
+      if (status == 3) {
+        pthread_mutex_unlock(&lockStatus);
+        return NULL;
+      } else
+        pthread_mutex_unlock(&lockStatus);
       int i = 0;
       int bytes_read = read(fd, buf, 100);
       if (countNeg > 5000000) {
-        pthread_mutex_lock(&lockDisconnected);
-        disconnected = 1;
-        pthread_mutex_unlock(&lockDisconnected);
+        pthread_mutex_lock(&lockStatus);
+        status = 2;
+        pthread_mutex_unlock(&lockStatus);
         printf("Arduino disconnected\n");
         break;
       }
@@ -349,7 +359,7 @@ void* usbCom(void* p) {
           pthread_mutex_unlock(&lockInstr);
           msg[j] = '\0';
           printf("%s\n", &msg[0]);
-          /* update values */
+          // update values
           char* str = NULL;
           double num = strtod(&msg[18], &str);
           // valid temperature range: 5 - 40 C / 41 - 104 F
@@ -389,21 +399,35 @@ void* usbCom(void* p) {
   return NULL;
 }
 
+void* quit(void* p) {
+  char rawStr[5];
+  while (1) {
+    // get user input
+    fgets(rawStr, 5, stdin);
+    // check for termination
+    if (rawStr[0] == 'q' && rawStr[1] == '\n') {
+      printf("You have chosen to quit. Program terminates...\n");
+      pthread_mutex_lock(&lockStatus);
+      status = 3; //set status to 3 for termination
+      pthread_mutex_unlock(&lockStatus);
+      return NULL;
+    }
+  }
+}
+
 int main(int argc, char *argv[]) {
-  /* initialize global variables */
-  instr = 0;
+  // initialize global variables
+  status = 0;
   currScale = 0;
-  standby = 0;
-  disconnected = 0;
+  instr = 0;
   count = 0;
   curr = 0;
   max = -DBL_MAX;
   min = DBL_MAX;
   avg = 0;
-  pthread_mutex_init(&lockInstr, NULL);
+  pthread_mutex_init(&lockStatus, NULL);
   pthread_mutex_init(&lockCurrScale, NULL);
-  pthread_mutex_init(&lockStandby, NULL);
-  pthread_mutex_init(&lockDisconnected, NULL);
+  pthread_mutex_init(&lockInstr, NULL);
   pthread_mutex_init(&lockCount, NULL);
   pthread_mutex_init(&lockCurr, NULL);
   pthread_mutex_init(&lockMax, NULL);
@@ -419,16 +443,29 @@ int main(int argc, char *argv[]) {
     printf("\nPlease specify a port number greater than 1024\n");
     exit(-1);
   }
-  /* create new thread */
+  // create new threads
   pthread_t thread2;
-  int ret = pthread_create(&thread2, NULL, &usbCom, NULL);
-  if (ret != 0) {
+  int ret1 = pthread_create(&thread2, NULL, &usbCom, NULL);
+  if (ret1 != 0) {
     printf("Cannot create thread 2\n");
-    return 1; // return 1 for error
+    return 1; // return 1 for error 1
+  }
+  pthread_t thread3;
+  int ret2 = pthread_create(&thread3, NULL, &quit, NULL);
+  if (ret2 != 0) {
+    printf("Cannot create thread 3\n");
+    return 2; // return 2 for error 2
   }
   while (1) {
+  	pthread_mutex_lock(&lockStatus);
+    if (status == 3) {
+      pthread_mutex_unlock(&lockStatus);
+      break;
+    } else
+      pthread_mutex_unlock(&lockStatus);
     start_server(port_number);
   }
   pthread_join(thread2, NULL);
+  pthread_join(thread3, NULL);
   return 0; // return 0 for success
 }
