@@ -15,6 +15,7 @@
 #include <float.h>
 
 char msg[101];
+int portNum;
 int status; // 0: running / default, 1: standing by, 2: disconnected, 3: terminated
 int currScale; // 0: C / default, 1: F
 int instr; // 0: default / no instruction, 1: change scale to C, 2: change scale to F, 3: stand-by mode,
@@ -25,6 +26,7 @@ double curr;
 double max;
 double min;
 double avg;
+pthread_mutex_t lockPortNum;
 pthread_mutex_t lockStatus;
 pthread_mutex_t lockCurrScale;
 pthread_mutex_t lockInstr;
@@ -34,52 +36,19 @@ pthread_mutex_t lockMax;
 pthread_mutex_t lockMin;
 pthread_mutex_t lockAvg;
 
-int start_server(int PORT_NUMBER) {
-  // structs to represent the server and client
-  struct sockaddr_in server_addr, client_addr;
-  int sock; // socket descriptor
-  // 1. socket: creates a socket descriptor that you later use to make other system calls
-  if ((sock = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-	  perror("Socket");
-	  exit(1);
-  }
-  int temp;
-  if (setsockopt(sock,SOL_SOCKET, SO_REUSEADDR, &temp, sizeof(int)) == -1) {
-	  perror("Setsockopt");
-	  exit(1);
-  }
-  // configure the server
-  server_addr.sin_port = htons(PORT_NUMBER); // specify port number
-  server_addr.sin_family = AF_INET;         
-  server_addr.sin_addr.s_addr = INADDR_ANY; 
-  bzero(&(server_addr.sin_zero), 8);
-  // 2. bind: use the socket and associate it with the port number
-  if (bind(sock, (struct sockaddr*) &server_addr, sizeof(struct sockaddr)) == -1) {
-	  perror("Unable to bind");
-	  exit(1);
-  }
-  // 3. listen: indicates that we want to listen to the port to which we bound; second arg is number of allowed connections
-  if (listen(sock, 1) == -1) {
-	  perror("Listen");
-	  exit(1);
-  }   
-  // once you get here, the server is set up and about to start listening
-  // printf("\nServer configured to listen on port %d\n", PORT_NUMBER);
-  fflush(stdout);
-  // 4. accept: wait here until we get a connection on that port
-  int sin_size = sizeof(struct sockaddr_in);
-  int fd = accept(sock, (struct sockaddr*) &client_addr, (socklen_t*) &sin_size);
+void* dealRequest(void* p) {
+  int fd = *(int*) p;
   if (fd != -1) {
-	  // printf("Server got a connection from (%s, %d)\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-	  // buffer to read data into
-	  char request[1024];
-	  // 5. recv: read incoming message (request) into buffer
-	  int bytes_received = recv(fd, request, 1024, 0);
-	  // null-terminate the string
-	  request[bytes_received] = '\0';
-	  // print it to standard out
-	  if (request[5] != 't' && request[5] != 'f')
-	    printf("This is the incoming request: %c\n", request[5]);
+    // printf("Server got a connection from (%s, %d)\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+    // buffer to read data into
+    char request[1024];
+    // 5. recv: read incoming message (request) into buffer
+    int bytes_received = recv(fd, request, 1024, 0);
+    // null-terminate the string
+    request[bytes_received] = '\0';
+    // print it to standard out
+    if (request[5] != 't' && request[5] != 'f')
+      printf("This is the incoming request: %c\n", request[5]);
     if (request[5] == 'C') {
       pthread_mutex_lock(&lockInstr);
       instr = 1;
@@ -130,7 +99,9 @@ int start_server(int PORT_NUMBER) {
       pthread_mutex_unlock(&lockInstr);
     }
     char portNumStr[5];
-    sprintf(portNumStr, "%d", PORT_NUMBER);
+    pthread_mutex_lock(&lockPortNum);
+    sprintf(portNumStr, "%d", portNum);
+    pthread_mutex_unlock(&lockPortNum);
     // this is the message that we'll send back
     char* reply1 = "HTTP/1.1 200 OK\nContent-Type: text/html\n\n<html><head><meta http-equiv=\"refresh\" content=\"1\" /></head><body><p id=\"text\">";
     char* reply2 = "Current temperature: ";
@@ -142,16 +113,16 @@ int start_server(int PORT_NUMBER) {
     if (currScale == 0) {
       pthread_mutex_unlock(&lockCurrScale);
       snprintf(currStr, 7, "%.2f", temp1);
-  	  currStr[5] = ' ';
-  	  currStr[6] = 'C';
+      currStr[5] = ' ';
+      currStr[6] = 'C';
     } else {
-  	  pthread_mutex_unlock(&lockCurrScale);
-  	  temp1 = temp1 * 9 / 5 + 32;
-  	  snprintf(currStr, 7, "%.2f", temp1);
-  	  currStr[5] = ' ';
-  	  currStr[6] = 'F';
+      pthread_mutex_unlock(&lockCurrScale);
+      temp1 = temp1 * 9 / 5 + 32;
+      snprintf(currStr, 7, "%.2f", temp1);
+      currStr[5] = ' ';
+      currStr[6] = 'F';
     }
-
+ 
     char* reply3 = "<br/>Maximum temperature so far: ";
     pthread_mutex_lock(&lockMax);
     double temp2 = max;
@@ -159,18 +130,18 @@ int start_server(int PORT_NUMBER) {
     char maxStr[7];
     pthread_mutex_lock(&lockCurrScale);
     if (currScale == 0) {
-  	  pthread_mutex_unlock(&lockCurrScale);
-  	  snprintf(maxStr, 7, "%.2f", temp2);
-  	  maxStr[5] = ' ';
-  	  maxStr[6] = 'C';
+      pthread_mutex_unlock(&lockCurrScale);
+      snprintf(maxStr, 7, "%.2f", temp2);
+      maxStr[5] = ' ';
+      maxStr[6] = 'C';
     } else {
-  	  pthread_mutex_unlock(&lockCurrScale);
+      pthread_mutex_unlock(&lockCurrScale);
       temp2 = temp2 * 9 / 5 + 32;
       snprintf(maxStr, 7, "%.2f", temp2);
       maxStr[5] = ' ';
       maxStr[6] = 'F';
     }
-
+  
     char* reply4 = "<br/>Minimum temperature so far: ";
     char minStr[7];
     pthread_mutex_lock(&lockMin);
@@ -179,17 +150,17 @@ int start_server(int PORT_NUMBER) {
     pthread_mutex_lock(&lockCurrScale);
     if (currScale == 0) {
       pthread_mutex_unlock(&lockCurrScale);
-  	  snprintf(minStr, 7, "%.2f", temp3);
-  	  minStr[5] = ' ';
-  	  minStr[6] = 'C';
+      snprintf(minStr, 7, "%.2f", temp3);
+      minStr[5] = ' ';
+      minStr[6] = 'C';
     } else {
-  	  pthread_mutex_unlock(&lockCurrScale);
-  	  temp3 = temp3 * 9 / 5 + 32;
-  	  snprintf(minStr, 7, "%.2f", temp3);
-  	  minStr[5] = ' ';
-  	  minStr[6] = 'F';
+      pthread_mutex_unlock(&lockCurrScale);
+      temp3 = temp3 * 9 / 5 + 32;
+      snprintf(minStr, 7, "%.2f", temp3);
+      minStr[5] = ' ';
+      minStr[6] = 'F';
     }
-
+  
     char* reply5 = "<br/>Average temperature so far: ";
     char avgStr[7];
     pthread_mutex_lock(&lockAvg);
@@ -197,18 +168,18 @@ int start_server(int PORT_NUMBER) {
     pthread_mutex_unlock(&lockAvg);
     pthread_mutex_lock(&lockCurrScale);
     if (currScale == 0) {
-  	  pthread_mutex_unlock(&lockCurrScale);
-  	  snprintf(avgStr, 7, "%.2f", temp4);
-  	  avgStr[5] = ' ';
-  	  avgStr[6] = 'C';
+      pthread_mutex_unlock(&lockCurrScale);
+      snprintf(avgStr, 7, "%.2f", temp4);
+      avgStr[5] = ' ';
+      avgStr[6] = 'C';
     } else {
-  	  pthread_mutex_unlock(&lockCurrScale);
-  	  temp4 = temp4 * 9 / 5 + 32;
-  	  snprintf(avgStr, 7, "%.2f", temp4);
-  	  avgStr[5] = ' ';
-  	  avgStr[6] = 'F';
+      pthread_mutex_unlock(&lockCurrScale);
+      temp4 = temp4 * 9 / 5 + 32;
+      snprintf(avgStr, 7, "%.2f", temp4);
+      avgStr[5] = ' ';
+      avgStr[6] = 'F';
     }
-
+  
     char* reply6 = "</p><button id=\"cButton\">Celcius</button><button id=\"fButton\">Fahrenheit</button><br/><br/><button id=\"sButton\">Stand-by</button><button id=\"eButton\">Resume</button><br/><br/><button id=\"rButton\">Change light to red</button><button id=\"gButton\">Change light to green</button><button id=\"oButton\">Turn off light</button><br/><br/><button id=\"aButton\">Change display to CAFE</button><button id=\"iButton\">Change display to CIS</button><script>var text = document.getElementById(\"text\");\nvar cButton = document.getElementById(\"cButton\");\nvar fButton = document.getElementById(\"fButton\");\nvar sButton = document.getElementById(\"sButton\");\nvar eButton = document.getElementById(\"eButton\");\nvar rButton = document.getElementById(\"rButton\");\nvar gButton = document.getElementById(\"gButton\");\nvar oButton = document.getElementById(\"oButton\");\nvar aButton = document.getElementById(\"aButton\");\nvar iButton = document.getElementById(\"iButton\");\ncButton.addEventListener(\"click\", handleCButton);\nfButton.addEventListener(\"click\", handleFButton);\nsButton.addEventListener(\"click\", handleSButton);\neButton.addEventListener(\"click\", handleEButton);\nrButton.addEventListener(\"click\", handleRButton);\ngButton.addEventListener(\"click\", handleGButton);\noButton.addEventListener(\"click\", handleOButton);\naButton.addEventListener(\"click\", handleAButton);\niButton.addEventListener(\"click\", handleIButton);\nfunction handleCButton() {\nconst Http = new XMLHttpRequest();\nconst url = \"http://localhost:";
     char* reply7 = "/C\";\nHttp.open(\"GET\", url);\nHttp.send();\n}\nfunction handleFButton() {\nconst Http = new XMLHttpRequest();\nconst url = \"http://localhost:";
     char* reply8 = "/F\";\nHttp.open(\"GET\", url);\nHttp.send();\n}\nfunction handleSButton() {\nconst Http = new XMLHttpRequest();\nconst url = \"http://localhost:";
@@ -220,7 +191,7 @@ int start_server(int PORT_NUMBER) {
     char* reply14 = "/A\";\nHttp.open(\"GET\", url);\nHttp.send();\n}\nfunction handleIButton() {\nconst Http = new XMLHttpRequest();\nconst url = \"http://localhost:";
     char* reply15 = "/I\";\nHttp.open(\"GET\", url);\nHttp.send();\n}</script></body></html>";
     // 6. send: send the outgoing message (response) over the socket
-    // note that the second argument is a char*, and the third is the number of chars	
+    // note that the second argument is a char*, and the third is the number of chars 
     send(fd, reply1, strlen(reply1), 0);
     pthread_mutex_lock(&lockStatus);
     if (status == 2) {
@@ -265,6 +236,63 @@ int start_server(int PORT_NUMBER) {
     // 7. close: close the connection
     close(fd);
     // printf("Server closed connection\n");
+  }
+  return NULL;
+}
+
+int start_server() {
+  pthread_mutex_lock(&lockPortNum);
+  int PORT_NUMBER = portNum;
+  pthread_mutex_unlock(&lockPortNum);
+  // structs to represent the server and client
+  struct sockaddr_in server_addr, client_addr;
+  int sock; // socket descriptor
+  // 1. socket: creates a socket descriptor that you later use to make other system calls
+  if ((sock = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+    perror("Socket");
+    exit(1);
+  }
+  int temp;
+  if (setsockopt(sock,SOL_SOCKET, SO_REUSEADDR, &temp, sizeof(int)) == -1) {
+    perror("Setsockopt");
+    exit(1);
+  }
+  // configure the server
+  server_addr.sin_port = htons(PORT_NUMBER); // specify port number
+  server_addr.sin_family = AF_INET;         
+  server_addr.sin_addr.s_addr = INADDR_ANY; 
+  bzero(&(server_addr.sin_zero), 8);
+  // 2. bind: use the socket and associate it with the port number
+  if (bind(sock, (struct sockaddr*) &server_addr, sizeof(struct sockaddr)) == -1) {
+    perror("Unable to bind");
+    exit(1);
+  }
+  // 3. listen: indicates that we want to listen to the port to which we bound; second arg is number of allowed connections
+  if (listen(sock, 1) == -1) {
+    perror("Listen");
+    exit(1);
+  }   
+  // once you get here, the server is set up and about to start listening
+  // printf("\nServer configured to listen on port %d\n", PORT_NUMBER);
+  fflush(stdout);
+  // 4. accept: wait here until we get a connection on that port
+  int sin_size = sizeof(struct sockaddr_in);
+  int *fd;
+  pthread_t thread_req;
+  while (1) {
+    pthread_mutex_lock(&lockStatus);
+    if (status == 3) {
+      pthread_mutex_unlock(&lockStatus);
+      break;
+    } else {
+      pthread_mutex_unlock(&lockStatus);
+      fd = malloc(sizeof(int));
+      *fd = accept(sock, (struct sockaddr*) &client_addr, (socklen_t*) &sin_size);
+      if (*fd != -1) {
+        pthread_create(&thread_req, NULL, &dealRequest, fd);
+        pthread_detach(thread_req);
+      }
+    }
   }
   // 8. close: close the socket
   close(sock);
@@ -372,12 +400,12 @@ void* usbCom(void* p) {
             if (str != NULL && num != 0) {
               if (num > max) {
                 pthread_mutex_lock(&lockMax);
-        	      max = num;
+        	    max = num;
                 pthread_mutex_unlock(&lockMax);
               }
               if (num < min) {
                 pthread_mutex_lock(&lockMin);
-        	      min = num;
+        	    min = num;
                 pthread_mutex_unlock(&lockMin);
               }
               pthread_mutex_lock(&lockAvg);
@@ -425,6 +453,7 @@ int main(int argc, char *argv[]) {
   max = -DBL_MAX;
   min = DBL_MAX;
   avg = 0;
+  pthread_mutex_init(&lockPortNum, NULL);
   pthread_mutex_init(&lockStatus, NULL);
   pthread_mutex_init(&lockCurrScale, NULL);
   pthread_mutex_init(&lockInstr, NULL);
@@ -443,6 +472,9 @@ int main(int argc, char *argv[]) {
     printf("\nPlease specify a port number greater than 1024\n");
     exit(-1);
   }
+  pthread_mutex_lock(&lockPortNum);
+  portNum = port_number;
+  pthread_mutex_unlock(&lockPortNum);
   // create new threads
   pthread_t thread2;
   int ret1 = pthread_create(&thread2, NULL, &usbCom, NULL);
@@ -456,15 +488,7 @@ int main(int argc, char *argv[]) {
     printf("Cannot create thread 3\n");
     return 2; // return 2 for error 2
   }
-  while (1) {
-  	pthread_mutex_lock(&lockStatus);
-    if (status == 3) {
-      pthread_mutex_unlock(&lockStatus);
-      break;
-    } else
-      pthread_mutex_unlock(&lockStatus);
-    start_server(port_number);
-  }
+  start_server();
   pthread_join(thread2, NULL);
   pthread_join(thread3, NULL);
   return 0; // return 0 for success
